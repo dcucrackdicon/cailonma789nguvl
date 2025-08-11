@@ -1,0 +1,15 @@
+{
+  "name": "taixiu-websocket-server",
+  "version": "1.0.0",
+  "description": "WebSocket server kết nối Tài Xỉu và cung cấp API kết quả + dự đoán",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "engines": {
+    "node": ">=16.x"
+  }
+}
