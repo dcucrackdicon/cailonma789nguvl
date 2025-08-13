@@ -174,8 +174,8 @@ function predictTaiXiuChanLeTongProMax(history) {
         score1 += (analysis.basicStats.tai || 0) * weights.basicStats;
         score2 += (analysis.basicStats.xiu || 0) * weights.basicStats;
         const { current, max } = analysis.streak;
-        if(max && max.tai > 0) score2 += (current.tai / max.tai) * weights.streak; // Phá chuỗi Tài -> cộng điểm cho Xỉu
-        if(max && max.xiu > 0) score1 += (current.xiu / max.xiu) * weights.streak; // Phá chuỗi Xỉu -> cộng điểm cho Tài
+        if(max && max.tai > 0) score2 += (current.tai / max.tai) * weights.streak;
+        if(max && max.xiu > 0) score1 += (current.xiu / max.xiu) * weights.streak;
         for (const [_, pattern] of Object.entries(analysis.patterns)) {
             if (pattern.prediction === 'Tài') score1 += (pattern.confidence || 0) * weights.patterns;
             else score2 += (pattern.confidence || 0) * weights.patterns;
@@ -183,7 +183,7 @@ function predictTaiXiuChanLeTongProMax(history) {
         if (analysis.trends.taiXiu.direction === 'up') score1 += weights.trends;
         else if (analysis.trends.taiXiu.direction === 'down') score2 += weights.trends;
         
-        return score1 > score2 ? 'Xỉu' : 'Tài'; // Đảo ngược: Nếu điểm Tài cao hơn thì dự đoán Xỉu và ngược lại.
+        return score1 > score2 ? 'Tài' : 'Xỉu';
 
     } else { 
         return 'Chẵn'; 
@@ -225,26 +225,34 @@ function predictTaiXiuChanLeTongProMax(history) {
   }
 }
 
+
 // ==================================================================
 //               CÁC BIẾN LƯU TRỮ TRẠNG THÁI
 // ==================================================================
 let latestResult = {
-  id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: 0, Xuc_xac_1: 0, Xuc_xac_2: 0, Xuc_xac_3: 0, Tong: 0, Ket_qua: "Chưa có kết quả"
+  id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ",
+  Phien: 0,
+  Xuc_xac_1: 0,
+  Xuc_xac_2: 0,
+  Xuc_xac_3: 0,
+  Tong: 0,
+  Ket_qua: "Chưa có kết quả"
 };
-let lichSuPhien = []; // Mảng chứa các object { Tong: ... }
+let lichSuPhien = [];
+
+// --- Biến quản lý logic dự đoán ---
 let duDoanDaChot = "Chờ phiên mới..."; 
 let duDoanPhienSau = "Chờ dữ liệu...";
 let doTinCayPhienSau = 0;
+
+// --- Biến kết quả và thống kê ---
 let ketQuaDuDoan = "Chưa xác định";
 let tongDung = 0;
 let tongSai = 0;
 
-// ==================================================================
-// THÊM MỚI: CÁC BIẾN ĐỂ QUẢN LÝ LOGIC "ĐẢO CẦU"
-// ==================================================================
-let consecutiveLosses = 0; // Đếm số lần thua liên tiếp
-let isInvertedMode = false; // Trạng thái có đang đảo ngược dự đoán hay không
-const LOSS_STREAK_TO_INVERT = 3; // Thua 3 tay liên tiếp thì đảo
+// --- THÊM MỚI: Biến quản lý chế độ đảo ngược ---
+let predictionMode = 'normal'; // 'normal' hoặc 'reversed'
+let consecutiveLosses = 0;     // Đếm số lần thua liên tiếp
 
 
 // ==================================================================
@@ -262,14 +270,17 @@ function connectWebSocket() {
   ws.on('open', () => {
     console.log("✅ Đã kết nối WebSocket");
     ws.send(JSON.stringify(LOGIN_MESSAGE));
-    setTimeout(() => { ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT)); ws.send(JSON.stringify(SUBSCRIBE_LOBBY)); }, 1000);
+    setTimeout(() => {
+      ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT));
+      ws.send(JSON.stringify(SUBSCRIBE_LOBBY));
+    }, 1000);
     setInterval(() => ws.send("2"), 10000);
     setInterval(() => ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT)), 30000);
     setInterval(() => ws.send(JSON.stringify([7, "Simms", lastEventId, 0, { id: 0 }])), 15000);
   });
 
   // ==================================================================
-  //        XỬ LÝ MESSAGE VỚI LOGIC "ĐẢO CẦU"
+  //        XỬ LÝ MESSAGE VỚI LOGIC ĐẢO NGƯỢC KHI THUA
   // ==================================================================
   ws.on('message', (msg) => {
     try {
@@ -277,74 +288,64 @@ function connectWebSocket() {
       if (Array.isArray(data)) {
         if (data[0] === 7 && data[1] === "Simms" && Number.isInteger(data[2])) { lastEventId = data[2]; }
         
-        // Khi có kết quả của một phiên
         if (data[1]?.cmd === 2006) {
           const { sid, d1, d2, d3 } = data[1];
           const tong = d1 + d2 + d3;
           const ketQuaThucTe = tong >= 11 ? "Tài" : "Xỉu";
 
-          // ** BƯỚC 1: KIỂM TRA KẾT QUẢ DỰ ĐOÁN CỦA PHIÊN TRƯỚC **
           if (duDoanDaChot === "Tài" || duDoanDaChot === "Xỉu") {
             if (ketQuaThucTe === duDoanDaChot) {
               ketQuaDuDoan = "Đúng";
               tongDung++;
-              consecutiveLosses = 0; // Reset chuỗi thua khi thắng
+              consecutiveLosses = 0;
             } else {
               ketQuaDuDoan = "Sai";
               tongSai++;
-              consecutiveLosses++; // Tăng chuỗi thua khi sai
+              consecutiveLosses++;
             }
-            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | DỰ ĐOÁN: ${duDoanDaChot} => ${ketQuaDuDoan} (Thua liên tiếp: ${consecutiveLosses})`);
-            console.log(`--- Thống kê: ${tongDung} Đúng - ${tongSai} Sai`);
+            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Dự đoán (Chốt): ${duDoanDaChot} => KẾT QUẢ: ${ketQuaDuDoan}`);
+            console.log(`--- Thống kê: ${tongDung} Đúng - ${tongSai} Sai | Chuỗi thua hiện tại: ${consecutiveLosses}`);
+
+            if (consecutiveLosses >= 2) {
+              predictionMode = (predictionMode === 'normal' ? 'reversed' : 'normal');
+              console.log(`*** ĐÃ THUA ${consecutiveLosses} LẦN. Chuyển chế độ dự đoán thành: ${predictionMode.toUpperCase()} ***`);
+              consecutiveLosses = 0;
+            }
+
           } else {
             console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Bắt đầu chuỗi dự đoán...`);
           }
           
-          // Cập nhật kết quả mới nhất và lịch sử
           latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketQuaThucTe };
           lichSuPhien.push({ Tong: tong });
           if (lichSuPhien.length > 1000) { lichSuPhien.shift(); }
-
-          // ** BƯỚC 2: KIỂM TRA VÀ CẬP NHẬT CHẾ ĐỘ "ĐẢO CẦU" **
-          if (consecutiveLosses >= LOSS_STREAK_TO_INVERT) {
-            isInvertedMode = !isInvertedMode; // Đảo ngược chế độ
-            consecutiveLosses = 0; // Reset chuỗi thua sau khi đã đảo
-            console.log(`🔥🔥🔥 Chuỗi ${LOSS_STREAK_TO_INVERT} trận thua! Kích hoạt chế độ ${isInvertedMode ? "ĐẢO NGƯỢC" : "BÌNH THƯỜNG"}. 🔥🔥🔥`);
-          }
           
-          // ** BƯỚC 3: TÍNH TOÁN VÀ "CHỐT" DỰ ĐOÁN CHO PHIÊN TIẾP THEO **
-          let rawPrediction = "Chờ...";
           if (lichSuPhien.length < 10) {
-            rawPrediction = `Chờ đủ dữ liệu... (${lichSuPhien.length}/10)`;
+            duDoanPhienSau = `Chờ đủ dữ liệu... (${lichSuPhien.length}/10)`;
             doTinCayPhienSau = 0;
           } else {
             try {
               const predictionResult = predictTaiXiuChanLeTongProMax(lichSuPhien);
-              rawPrediction = predictionResult.taiXiu;
+              const rawPrediction = predictionResult.taiXiu;
+              let finalPrediction = rawPrediction;
+
+              if (predictionMode === 'reversed') {
+                finalPrediction = (rawPrediction === 'Tài' ? 'Xỉu' : 'Tài');
+              }
+              
+              duDoanPhienSau = finalPrediction;
               doTinCayPhienSau = predictionResult.confidence.taiXiu;
               console.log("   Phân tích:", predictionResult.analysisReport.keyFindings.join(' | '));
+
             } catch (error) {
-              rawPrediction = `Lỗi phân tích: ${error.message}`;
+              duDoanPhienSau = `Lỗi phân tích: ${error.message}`;
               doTinCayPhienSau = 0;
             }
           }
 
-          // Áp dụng chế độ "Đảo cầu" nếu đang được kích hoạt
-          if (rawPrediction === "Tài" || rawPrediction === "Xỉu") {
-            if (isInvertedMode) {
-              duDoanPhienSau = (rawPrediction === 'Tài') ? 'Xỉu' : 'Tài';
-            } else {
-              duDoanPhienSau = rawPrediction;
-            }
-          } else {
-            duDoanPhienSau = rawPrediction;
-          }
-          
-          // Chốt dự đoán này để so sánh ở lần trả kết quả tiếp theo
           duDoanDaChot = duDoanPhienSau;
           
-          let predictionModeNotice = isInvertedMode ? " (Đã đảo ngược)" : "";
-          console.log(`==> DỰ ĐOÁN PHIÊN TỚI: ${duDoanPhienSau}${predictionModeNotice} (Độ tin cậy: ${doTinCayPhienSau}%)\n--------------------`);
+          console.log(`==> DỰ ĐOÁN PHIÊN TỚI (Chế độ: ${predictionMode}): ${duDoanPhienSau} (Độ tin cậy: ${doTinCayPhienSau}%)\n--------------------`);
         }
       }
     } catch (err) { /* Bỏ qua lỗi */ }
@@ -354,30 +355,18 @@ function connectWebSocket() {
 }
 
 // ==================================================================
-//        HTTP SERVER VỚI SỬA LỖI CORS
+//            HTTP SERVER - TRẢ VỀ JSON THEO ĐỊNH DẠNG CŨ
 // ==================================================================
 const server = http.createServer((req, res) => {
-  // SỬA LỖI CORS: Thêm header này để cho phép các trang web khác (frontend của bạn) gọi đến API này
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  // Trình duyệt sẽ gửi một request OPTIONS trước, ta cần xử lý nó
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204); // 204 No Content
-    res.end();
-    return;
-  }
-  
   if (req.url === "/taixiu") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
 
     const patternString = lichSuPhien.map(p => p.Tong >= 11 ? 'T' : 'X').slice(-20).join('');
-    
-    // Sử dụng payload cũ để tương thích với frontend của bạn
+
+    // **SỬA ĐỔI Ở ĐÂY: Trả về JSON theo định dạng cũ bạn muốn**
     const legacyPayload = {
       id: latestResult.id,
-      Phien: latestResult.Phien + 1, // Trả về phiên sắp diễn ra
+      Phien: latestResult.Phien,
       Xuc_xac_1: latestResult.Xuc_xac_1,
       Xuc_xac_2: latestResult.Xuc_xac_2,
       Xuc_xac_3: latestResult.Xuc_xac_3,
@@ -385,13 +374,17 @@ const server = http.createServer((req, res) => {
       Ket_qua: latestResult.Ket_qua,
       result: ketQuaDuDoan,
       Pattern: patternString,
-      Du_doan: duDoanPhienSau, // Luôn là dự đoán đã được xử lý (có thể đã đảo ngược)
+      Du_doan: duDoanPhienSau,
       Do_tin_cay: doTinCayPhienSau,
       "Đúng": tongDung,
-      "Sai": tongSai
+      "Sai": tongSai,
+      // Thêm trường này để bạn biết nó đang ở chế độ nào, không làm hỏng cấu trúc cũ
+      "Che_do": predictionMode 
     };
     
+    // Gửi đi payload cũ
     res.end(JSON.stringify(legacyPayload, null, 2)); 
+
   } else {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Không tìm thấy - Vui lòng truy cập /taixiu");
@@ -403,3 +396,4 @@ server.listen(PORT, () => {
   console.log(`Truy cập http://localhost:${PORT}/taixiu để xem kết quả.`);
   connectWebSocket();
 });
+
