@@ -8,7 +8,7 @@ const WebSocket = require('ws');
 const PORT = process.env.PORT || 10000;
 
 // ==================================================================
-// KHAI BÁO THUẬT TOÁN predictTaiXiuChanLeTongProMax
+// KHAI BÁO THUẬT TOÁN predictTaiXiuChanLeTongProMax (Giữ nguyên)
 // ==================================================================
 function predictTaiXiuChanLeTongProMax(history) {
   /* * SỬA ĐỔI: Giảm ngưỡng yêu cầu xuống 10 phiên để dự đoán sớm hơn
@@ -167,9 +167,6 @@ function predictTaiXiuChanLeTongProMax(history) {
       return trends;
   }
   
-  // ==================================================================
-  // ===== HÀM ĐÃ ĐƯỢC SỬA ĐỔI ĐỂ ĐẢO NGƯỢC DỰ ĐOÁN =====
-  // ==================================================================
   function synthesizePrediction(type, analysis) {
     const weights = { basicStats: 0.4, streak: 0.3, patterns: 0.2, trends: 0.1 };
     let score1 = 0, score2 = 0; // score1 là cho Tài, score2 là cho Xỉu
@@ -186,12 +183,9 @@ function predictTaiXiuChanLeTongProMax(history) {
         if (analysis.trends.taiXiu.direction === 'up') score1 += weights.trends;
         else if (analysis.trends.taiXiu.direction === 'down') score2 += weights.trends;
         
-        // --- LOGIC ĐẢO NGƯỢC ---
-        // Logic gốc: return score1 > score2 ? 'Tài' : 'Xỉu';
         return score1 > score2 ? 'Xỉu' : 'Tài'; // Đảo ngược: Nếu điểm Tài cao hơn thì dự đoán Xỉu và ngược lại.
 
     } else { 
-        /* Logic cho Chẵn/Lẻ chưa được cài đặt trong mã gốc, giữ nguyên */ 
         return 'Chẵn'; 
     }
   }
@@ -232,7 +226,7 @@ function predictTaiXiuChanLeTongProMax(history) {
 }
 
 // ==================================================================
-//               CÁC BIẾN LƯU TRỮ TRẠNG THÁI
+//               CÁC BIẾN LƯU TRỮ TRẠNG THÁI (ĐÃ SỬA LẠI)
 // ==================================================================
 let latestResult = {
   id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ",
@@ -244,10 +238,17 @@ let latestResult = {
   Ket_qua: "Chưa có kết quả"
 };
 let lichSuPhien = []; // Mảng chứa các object { Tong: ... }
-let duDoanHienTai = "Chờ phiên mới...";
-let ketQuaDuDoan = "Chưa xác định";
+
+// --- THÊM MỚI: Các biến để quản lý logic dự đoán chính xác hơn ---
+let duDoanDaChot = "Chờ phiên mới..."; // Dự đoán đã được "chốt" cho phiên đang diễn ra
+let duDoanPhienSau = "Chờ dữ liệu...";  // Chỉ lưu "Tài" hoặc "Xỉu" cho phiên tiếp theo
+let doTinCayPhienSau = 0;              // Chỉ lưu độ tin cậy cho phiên tiếp theo
+
+// --- CÁC BIẾN KẾT QUẢ VÀ THỐNG KÊ ---
+let ketQuaDuDoan = "Chưa xác định"; // "Đúng" hoặc "Sai"
 let tongDung = 0;
 let tongSai = 0;
+
 
 // ==================================================================
 //                      CẤU HÌNH WEBSOCKET
@@ -272,40 +273,65 @@ function connectWebSocket() {
     setInterval(() => ws.send(JSON.stringify(SUBSCRIBE_TX_RESULT)), 30000);
     setInterval(() => ws.send(JSON.stringify([7, "Simms", lastEventId, 0, { id: 0 }])), 15000);
   });
+
+  // ==================================================================
+  //        XỬ LÝ MESSAGE VỚI LOGIC ĐÚNG/SAI ĐÃ SỬA LẠI
+  // ==================================================================
   ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
       if (Array.isArray(data)) {
         if (data[0] === 7 && data[1] === "Simms" && Number.isInteger(data[2])) { lastEventId = data[2]; }
+        
+        // Khi có kết quả của một phiên
         if (data[1]?.cmd === 2006) {
           const { sid, d1, d2, d3 } = data[1];
           const tong = d1 + d2 + d3;
-          const ketquaThucTe = tong >= 11 ? "Tài" : "Xỉu";
-          const duDoanTruocDo = duDoanHienTai.split(" ")[0];
+          const ketQuaThucTe = tong >= 11 ? "Tài" : "Xỉu";
 
-          if (duDoanTruocDo === "Tài" || duDoanTruocDo === "Xỉu") {
-            if (ketquaThucTe === duDoanTruocDo) { ketQuaDuDoan = "Đúng"; tongDung++; } 
-            else { ketQuaDuDoan = "Sai"; tongSai++; }
+          // SỬA ĐỔI: Logic so sánh Đúng/Sai
+          // Chỉ so sánh khi 'duDoanDaChot' không phải là giá trị khởi tạo
+          if (duDoanDaChot === "Tài" || duDoanDaChot === "Xỉu") {
+            if (ketQuaThucTe === duDoanDaChot) {
+              ketQuaDuDoan = "Đúng";
+              tongDung++;
+            } else {
+              ketQuaDuDoan = "Sai";
+              tongSai++;
+            }
+            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | DỰ ĐOÁN (chốt): ${duDoanDaChot} => KẾT QUẢ: ${ketQuaDuDoan}`);
+            console.log(`--- Thống kê: ${tongDung} Đúng - ${tongSai} Sai`);
+          } else {
+            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Bắt đầu chuỗi dự đoán...`);
           }
           
-          latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketquaThucTe };
+          // Cập nhật kết quả mới nhất và lịch sử
+          latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketQuaThucTe };
           lichSuPhien.push({ Tong: tong });
           if (lichSuPhien.length > 1000) { lichSuPhien.shift(); }
           
+          // Đưa ra dự đoán MỚI cho phiên TIẾP THEO
           if (lichSuPhien.length < 10) {
-            duDoanHienTai = `Chờ đủ dữ liệu... (${lichSuPhien.length}/10)`;
+            duDoanPhienSau = `Chờ đủ dữ liệu... (${lichSuPhien.length}/10)`;
+            doTinCayPhienSau = 0;
           } else {
             try {
               const predictionResult = predictTaiXiuChanLeTongProMax(lichSuPhien);
-              duDoanHienTai = `${predictionResult.taiXiu} (Độ tin cậy: ${predictionResult.confidence.taiXiu}%)`;
-              console.log("Phân tích:", predictionResult.analysisReport.keyFindings.join(' | '));
+              // SỬA ĐỔI: Lưu dự đoán và độ tin cậy vào các biến riêng biệt
+              duDoanPhienSau = predictionResult.taiXiu;
+              doTinCayPhienSau = predictionResult.confidence.taiXiu;
+              console.log("   Phân tích:", predictionResult.analysisReport.keyFindings.join(' | '));
             } catch (error) {
-              duDoanHienTai = `Lỗi phân tích: ${error.message}`;
+              duDoanPhienSau = `Lỗi phân tích: ${error.message}`;
+              doTinCayPhienSau = 0;
             }
           }
 
-          console.log(`--- Phiên #${sid}: ${ketquaThucTe} (${tong}) | KẾT QUẢ DỰ ĐOÁN: ${ketQuaDuDoan} | Thống kê: ${tongDung} Đúng - ${tongSai} Sai`);
-          console.log(`==> DỰ ĐOÁN PHIÊN TIẾP THEO (Đảo ngược): ${duDoanHienTai}\n--------------------`);
+          // THÊM MỚI: "Chốt" dự đoán cho phiên sắp tới.
+          // Dự đoán vừa tính xong (duDoanPhienSau) sẽ được dùng để so sánh ở lần trả kết quả tiếp theo.
+          duDoanDaChot = duDoanPhienSau;
+          
+          console.log(`==> DỰ ĐOÁN PHIÊN TIẾP THEO (Đảo ngược): ${duDoanPhienSau} (Độ tin cậy: ${doTinCayPhienSau}%)\n--------------------`);
         }
       }
     } catch (err) { /* Bỏ qua lỗi */ }
@@ -314,30 +340,56 @@ function connectWebSocket() {
   ws.on('error', (err) => { /* Bỏ qua lỗi */ });
 }
 
-// HTTP SERVER: Trả về JSON với định dạng đã SỬA LẠI ĐÚNG YÊU CẦU
+// HTTP SERVER: Trả về JSON với định dạng đã SỬA LẠI
 const server = http.createServer((req, res) => {
   if (req.url === "/taixiu") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
 
-    // Tái tạo chuỗi Pattern để hiển thị
     const patternString = lichSuPhien.map(p => p.Tong >= 11 ? 'T' : 'X').slice(-20).join('');
 
+    // SỬA ĐỔI: Trả về JSON với cấu trúc rõ ràng
     const responsePayload = {
         id: latestResult.id,
-        Phien: latestResult.Phien,
-        Xuc_xac_1: latestResult.Xuc_xac_1,
-        Xuc_xac_2: latestResult.Xuc_xac_2,
-        Xuc_xac_3: latestResult.Xuc_xac_3,
-        Tong: latestResult.Tong,
-        Ket_qua: latestResult.Ket_qua,
-        result: ketQuaDuDoan,
-        Pattern: patternString,
-        Du_doan: duDoanHienTai,
-        "Đúng": tongDung,
-        "Sai": tongSai
+        "Thông_tin_phiên_cuối": {
+            Phien: latestResult.Phien,
+            Ket_qua_thuc_te: latestResult.Ket_qua,
+            Tong_diem: latestResult.Tong,
+            Xuc_xac: [latestResult.Xuc_xac_1, latestResult.Xuc_xac_2, latestResult.Xuc_xac_3],
+        },
+        "Kết_quả_dự_đoán_phiên_cuối": {
+            Du_doan_da_chot: duDoanDaChot === "Tài" || duDoanDaChot === "Xỉu" ? duDoanDaChot : "Chưa có",
+            Ket_qua: ketQuaDuDoan,
+        },
+        "Dự_đoán_cho_phiên_tiếp_theo": {
+            Du_doan: duDoanPhienSau,
+            Do_tin_cay: doTinCayPhienSau
+        },
+        "Thống_kê": {
+            "Đúng": tongDung,
+            "Sai": tongSai,
+            "Tổng_số_phiên_dự_đoán": tongDung + tongSai
+        },
+        "Chuỗi_lịch_sử": patternString
     };
     
-    res.end(JSON.stringify(responsePayload, null, 2)); 
+    // Sửa responsePayload cũ để tương thích
+    const legacyPayload = {
+      id: latestResult.id,
+      Phien: latestResult.Phien,
+      Xuc_xac_1: latestResult.Xuc_xac_1,
+      Xuc_xac_2: latestResult.Xuc_xac_2,
+      Xuc_xac_3: latestResult.Xuc_xac_3,
+      Tong: latestResult.Tong,
+      Ket_qua: latestResult.Ket_qua,
+      result: ketQuaDuDoan,
+      Pattern: patternString,
+      Du_doan: duDoanPhienSau, // Chỉ trả về Tài/Xỉu
+      Do_tin_cay: doTinCayPhienSau, // Thêm trường độ tin cậy
+      "Đúng": tongDung,
+      "Sai": tongSai
+    };
+    
+    res.end(JSON.stringify(legacyPayload, null, 2)); 
   } else {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Không tìm thấy - Vui lòng truy cập /taixiu");
