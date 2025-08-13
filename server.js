@@ -1,6 +1,6 @@
 // ==================================================================
 //               TÍCH HỢP THUẬT TOÁN DỰ ĐOÁN PRO MAX
-//            (PHIÊN BẢN SỬA ĐỔI THEO YÊU CẦU)
+//            (PHIÊN BẢN SỬA ĐỔI - ĐẢO NGƯỢC DỰ ĐOÁN)
 // ==================================================================
 const http = require('http');
 const WebSocket = require('ws');
@@ -167,23 +167,33 @@ function predictTaiXiuChanLeTongProMax(history) {
       return trends;
   }
   
+  // ==================================================================
+  // ===== HÀM ĐÃ ĐƯỢC SỬA ĐỔI ĐỂ ĐẢO NGƯỢC DỰ ĐOÁN =====
+  // ==================================================================
   function synthesizePrediction(type, analysis) {
     const weights = { basicStats: 0.4, streak: 0.3, patterns: 0.2, trends: 0.1 };
-    let score1 = 0, score2 = 0;
+    let score1 = 0, score2 = 0; // score1 là cho Tài, score2 là cho Xỉu
     if (type === 'taiXiu') {
         score1 += (analysis.basicStats.tai || 0) * weights.basicStats;
         score2 += (analysis.basicStats.xiu || 0) * weights.basicStats;
         const { current, max } = analysis.streak;
-        if(max && max.tai > 0) score2 += (current.tai / max.tai) * weights.streak;
-        if(max && max.xiu > 0) score1 += (current.xiu / max.xiu) * weights.streak;
+        if(max && max.tai > 0) score2 += (current.tai / max.tai) * weights.streak; // Phá chuỗi Tài -> cộng điểm cho Xỉu
+        if(max && max.xiu > 0) score1 += (current.xiu / max.xiu) * weights.streak; // Phá chuỗi Xỉu -> cộng điểm cho Tài
         for (const [_, pattern] of Object.entries(analysis.patterns)) {
             if (pattern.prediction === 'Tài') score1 += (pattern.confidence || 0) * weights.patterns;
             else score2 += (pattern.confidence || 0) * weights.patterns;
         }
         if (analysis.trends.taiXiu.direction === 'up') score1 += weights.trends;
         else if (analysis.trends.taiXiu.direction === 'down') score2 += weights.trends;
-        return score1 > score2 ? 'Tài' : 'Xỉu';
-    } else { /* Tương tự cho Chẵn/Lẻ */ return 'Chẵn'; }
+        
+        // --- LOGIC ĐẢO NGƯỢC ---
+        // Logic gốc: return score1 > score2 ? 'Tài' : 'Xỉu';
+        return score1 > score2 ? 'Xỉu' : 'Tài'; // Đảo ngược: Nếu điểm Tài cao hơn thì dự đoán Xỉu và ngược lại.
+
+    } else { 
+        /* Logic cho Chẵn/Lẻ chưa được cài đặt trong mã gốc, giữ nguyên */ 
+        return 'Chẵn'; 
+    }
   }
 
   function calculatePatternSimilarity(p1, p2) { let m = 0; for (let i = 0; i < p1.length; i++) if (p1[i] === p2[i]) m++; return m / p1.length; }
@@ -295,7 +305,7 @@ function connectWebSocket() {
           }
 
           console.log(`--- Phiên #${sid}: ${ketquaThucTe} (${tong}) | KẾT QUẢ DỰ ĐOÁN: ${ketQuaDuDoan} | Thống kê: ${tongDung} Đúng - ${tongSai} Sai`);
-          console.log(`==> DỰ ĐOÁN PHIÊN TIẾP THEO: ${duDoanHienTai}\n--------------------`);
+          console.log(`==> DỰ ĐOÁN PHIÊN TIẾP THEO (Đảo ngược): ${duDoanHienTai}\n--------------------`);
         }
       }
     } catch (err) { /* Bỏ qua lỗi */ }
