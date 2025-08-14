@@ -143,7 +143,7 @@ function connectWebSocket() {
 }
 
 // ==================================================================
-//            HTTP SERVER - TRẢ VỀ JSON THEO ĐỊNH DẠNG CŨ
+//            HTTP SERVER - TRẢ VỀ JSON THEO ĐỊNH DẠNG MỚI
 // ==================================================================
 const server = http.createServer((req, res) => {
   if (req.url === "/taixiu") {
@@ -151,34 +151,32 @@ const server = http.createServer((req, res) => {
 
     const patternString = lichSuPhien.map(p => p.Tong >= 11 ? 'T' : 'X').slice(-20).join('');
 
-    // SỬA ĐỔI: Chuyển các key sang chữ thường
-    const legacyPayload = {
-      id: latestResult.id,
-      phien: latestResult.Phien,
-      xuc_xac_1: latestResult.Xuc_xac_1,
-      xuc_xac_2: latestResult.Xuc_xac_2,
-      xuc_xac_3: latestResult.Xuc_xac_3,
-      tong: latestResult.Tong,
-      ket_qua: latestResult.Ket_qua,
-      result: ketQuaDuDoan,
-      pattern: patternString,
-      du_doan: duDoanPhienSau,
-      do_tin_cay: doTinCayPhienSau,
-      dung: tongDung,
-      sai: tongSai,
-      che_do: predictionMode
+    // SỬA ĐỔI: Tạo payload mới theo đúng yêu cầu
+    const newPayload = {
+      "id": "dcumay",
+      "Phien": latestResult.Phien,
+      "Xuc_xac_1": latestResult.Xuc_xac_1,
+      "Xuc_xac_2": latestResult.Xuc_xac_2,
+      "Xuc_xac_3": latestResult.Xuc_xac_3,
+      "Tong": latestResult.Tong,
+      "Ket_qua": latestResult.Ket_qua,
+      "Pattern": patternString,
+      "Du_doan": duDoanPhienSau,
+      "ket_qua_du_doan": ketQuaDuDoan,
+      "tong_dung": tongDung,
+      "tong_sai": tongSai
     };
 
-    res.end(JSON.stringify(legacyPayload, null, 2));
+    res.end(JSON.stringify(newPayload, null, 2));
 
   } else {
     res.writeHead(404, { "Content-Type": "text/plain" });
-    res.end("Không tìm thấy - Vui lòng truy cập /taixiu");
+    res.end("Không tìm thấy - Vui lòng truy cập /scam");
   }
 });
 
 server.listen(PORT, () => {
   console.log(`🌐 Server đang chạy tại http://localhost:${PORT}`);
-  console.log(`Truy cập http://localhost:${PORT}/taixiu để xem kết quả.`);
+  console.log(`Truy cập http://localhost:${PORT}/scam để xem kết quả.`);
   connectWebSocket();
 });
