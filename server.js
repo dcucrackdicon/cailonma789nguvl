@@ -1,230 +1,15 @@
+// server.js
+
 // ==================================================================
-//               TÍCH HỢP THUẬT TOÁN DỰ ĐOÁN PRO MAX
-//            (PHIÊN BẢN SỬA ĐỔI - ĐẢO NGƯỢC DỰ ĐOÁN)
+//               TÍCH HỢP THUẬT TOÁN DỰ ĐOÁN TỪ FILE
 // ==================================================================
 const http = require('http');
 const WebSocket = require('ws');
 
+// NẠP THUẬT TOÁN TỪ FILE 'thuatoan.js'
+const analyzeAndPredict = require('./thuatoan.js');
+
 const PORT = process.env.PORT || 10000;
-
-// ==================================================================
-// KHAI BÁO THUẬT TOÁN predictTaiXiuChanLeTongProMax (Giữ nguyên)
-// ==================================================================
-function predictTaiXiuChanLeTongProMax(history) {
-  /* * SỬA ĐỔI: Giảm ngưỡng yêu cầu xuống 10 phiên để dự đoán sớm hơn
-   */
-  if (!history || history.length < 10) {
-    throw new Error(`Hệ thống yêu cầu tối thiểu 10 kết quả lịch sử để phân tích`);
-  }
-
-  /*
-   * CẤU TRÚC DỮ LIỆU NÂNG CAO
-   */
-  const analysisPeriods = {
-    ultraShort: history.slice(-10),
-    short: history.length >= 30 ? history.slice(-30) : history,
-    medium: history.length >= 100 ? history.slice(-100) : history,
-    long: history.length >= 500 ? history.slice(-500) : history
-  };
-
-  /*
-   * HỆ THỐNG PHÂN TÍCH ĐA TẦNG
-   */
-  const analysisLayers = {
-    basicStats: getWeightedStats(analysisPeriods),
-    streak: getStreakAnalysis(analysisPeriods.ultraShort),
-    patterns: getPatternAnalysis(analysisPeriods.medium),
-    cycles: detectCycles(analysisPeriods.long),
-    anomalies: detectAnomalies(history),
-    trends: getTrendAnalysis(analysisPeriods)
-  };
-
-  /*
-   * THUẬT TOÁN TỔNG HỢP THÔNG MINH
-   */
-  const finalPrediction = {
-    taiXiu: synthesizePrediction('taiXiu', analysisLayers),
-    chanLe: synthesizePrediction('chanLe', analysisLayers),
-    tong: predictTong(analysisLayers),
-    confidence: calculateConfidence(analysisLayers),
-    analysisReport: generateAnalysisReport(analysisLayers)
-  };
-
-  return finalPrediction;
-
-  /* * CÁC HÀM HỖ TRỢ CHUYÊN SÂU (giữ nguyên) */
-  function getWeightedStats(periods) {
-    const stats = {};
-    const weightProfile = { ultraShort: 0.4, short: 0.3, medium: 0.2, long: 0.1 };
-    stats.tongDistribution = {};
-    for (const [periodName, data] of Object.entries(periods)) {
-      if (!data || data.length === 0) continue;
-      const weight = weightProfile[periodName];
-      const periodStats = { tai: 0, xiu: 0, chan: 0, le: 0, tongDistribution: {} };
-      data.forEach((item, index) => {
-        const { Tong } = item;
-        const isTai = Tong >= 11;
-        const isChan = Tong % 2 === 0;
-        const itemWeight = weight * (0.5 + 0.5 * (index / data.length));
-        if (isTai) periodStats.tai += itemWeight; else periodStats.xiu += itemWeight;
-        if (isChan) periodStats.chan += itemWeight; else periodStats.le += itemWeight;
-        periodStats.tongDistribution[Tong] = (periodStats.tongDistribution[Tong] || 0) + itemWeight;
-      });
-      for (const key of ['tai', 'xiu', 'chan', 'le']) { stats[key] = (stats[key] || 0) + periodStats[key]; }
-      for (const [tong, count] of Object.entries(periodStats.tongDistribution)) { stats.tongDistribution[tong] = (stats.tongDistribution[tong] || 0) + count; }
-    }
-    return stats;
-  }
-
-  function getStreakAnalysis(data) {
-    const analysis = { current: { tai: 0, xiu: 0, chan: 0, le: 0 }, max: { tai: 0, xiu: 0, chan: 0, le: 0 }, averages: { tai: 0, xiu: 0, chan: 0, le: 0 }};
-    let lastTaiXiu = null, lastChanLe = null;
-    let streakCounts = { tai: [], xiu: [], chan: [], le: [] };
-    let currentStreaks = { tai: 0, xiu: 0, chan: 0, le: 0 };
-    data.forEach(item => {
-        const { Tong } = item;
-        const isTai = Tong >= 11;
-        const isChan = Tong % 2 === 0;
-        if (lastTaiXiu !== null && isTai !== lastTaiXiu) {
-            streakCounts[lastTaiXiu ? 'tai' : 'xiu'].push(currentStreaks[lastTaiXiu ? 'tai' : 'xiu']);
-            currentStreaks.tai = 0; currentStreaks.xiu = 0;
-        }
-        currentStreaks[isTai ? 'tai' : 'xiu']++;
-        lastTaiXiu = isTai;
-        if (lastChanLe !== null && isChan !== lastChanLe) {
-            streakCounts[lastChanLe ? 'chan' : 'le'].push(currentStreaks[lastChanLe ? 'chan' : 'le']);
-            currentStreaks.chan = 0; currentStreaks.le = 0;
-        }
-        currentStreaks[isChan ? 'chan' : 'le']++;
-        lastChanLe = isChan;
-    });
-    analysis.current = currentStreaks;
-    for(const key of ['tai', 'xiu', 'chan', 'le']) {
-        const streaks = streakCounts[key];
-        analysis.max[key] = streaks.length > 0 ? Math.max(...streaks, analysis.current[key]) : analysis.current[key];
-        analysis.averages[key] = streaks.length > 0 ? streaks.reduce((a, b) => a + b, 0) / streaks.length : 0;
-    }
-    return analysis;
-  }
-
-  function getPatternAnalysis(data) {
-    const patternConfigs = [ { length: 3, minOccurrences: 2 }, { length: 5, minOccurrences: 2 }];
-    const patternResults = {};
-    patternConfigs.forEach(config => {
-      const { length } = config;
-      if (data.length < length * 2) return;
-      const patterns = {};
-      const currentPattern = data.slice(-length).map(e => (e.Tong >= 11 ? 'T' : 'X')).join('');
-      for (let i = 0; i <= data.length - length - 1; i++) {
-        const pattern = data.slice(i, i + length).map(e => (e.Tong >= 11 ? 'T' : 'X')).join('');
-        const outcome = data[i + length].Tong >= 11 ? 'T' : 'X';
-        if (!patterns[pattern]) patterns[pattern] = { T: 0, X: 0, occurrences: 0 };
-        patterns[pattern][outcome]++;
-        patterns[pattern].occurrences++;
-      }
-      const validPatterns = Object.entries(patterns).filter(([_, stats]) => stats.occurrences >= config.minOccurrences);
-      let bestMatch = null, bestScore = 0;
-      validPatterns.forEach(([pattern, stats]) => {
-        const similarity = calculatePatternSimilarity(currentPattern, pattern);
-        const score = similarity * Math.log(stats.occurrences + 1);
-        if (score > bestScore) { bestScore = score; bestMatch = { pattern, stats }; }
-      });
-      if (bestMatch) { patternResults[`length${length}`] = { currentPattern, bestMatch, confidence: bestScore, prediction: bestMatch.stats.T > bestMatch.stats.X ? 'Tài' : 'Xỉu' }; }
-    });
-    return patternResults;
-  }
-  
-  function detectCycles(data) { return { detected: false, cycleLength: null, confidence: 0 }; }
-
-  function detectAnomalies(data) {
-    if(data.length < 10) return { count: 0, recentAnomalies: [], mean: 0, stdDev: 0 };
-    const tongValues = data.map(item => item.Tong);
-    const mean = tongValues.reduce((a, b) => a + b, 0) / tongValues.length;
-    const stdDev = Math.sqrt(tongValues.map(n => Math.pow(n - mean, 2)).reduce((a, b) => a + b) / tongValues.length);
-    const anomalies = [];
-    const zScoreThreshold = 2.5;
-    data.forEach((item, index) => {
-      if (stdDev > 0) {
-          const zScore = Math.abs((item.Tong - mean) / stdDev);
-          if (zScore > zScoreThreshold) { anomalies.push({ index, tong: item.Tong, zScore, isRecent: index >= data.length - 10 }); }
-      }
-    });
-    return { count: anomalies.length, recentAnomalies: anomalies.filter(a => a.isRecent), mean, stdDev };
-  }
-
-  function getTrendAnalysis(periods) {
-      const trends = { taiXiu: { direction: 'neutral' }, chanLe: { direction: 'neutral' }};
-      const getRatios = (data) => {
-          if (!data || data.length < 2) return { taiRatio: 0.5, chanRatio: 0.5 };
-          let tai = 0, chan = 0;
-          data.forEach(item => { if (item.Tong >= 11) tai++; if (item.Tong % 2 === 0) chan++; });
-          return { taiRatio: tai / data.length, chanRatio: chan / data.length };
-      };
-      const ultraShortStats = getRatios(periods.ultraShort);
-      const shortStats = getRatios(periods.short);
-      const trendStrengthTX = ((ultraShortStats.taiRatio - shortStats.taiRatio) || 0) * 0.7;
-      if (Math.abs(trendStrengthTX) > 0.05) trends.taiXiu.direction = trendStrengthTX > 0 ? 'up' : 'down';
-      return trends;
-  }
-  
-  function synthesizePrediction(type, analysis) {
-    const weights = { basicStats: 0.4, streak: 0.3, patterns: 0.2, trends: 0.1 };
-    let score1 = 0, score2 = 0; // score1 là cho Tài, score2 là cho Xỉu
-    if (type === 'taiXiu') {
-        score1 += (analysis.basicStats.tai || 0) * weights.basicStats;
-        score2 += (analysis.basicStats.xiu || 0) * weights.basicStats;
-        const { current, max } = analysis.streak;
-        if(max && max.tai > 0) score2 += (current.tai / max.tai) * weights.streak;
-        if(max && max.xiu > 0) score1 += (current.xiu / max.xiu) * weights.streak;
-        for (const [_, pattern] of Object.entries(analysis.patterns)) {
-            if (pattern.prediction === 'Tài') score1 += (pattern.confidence || 0) * weights.patterns;
-            else score2 += (pattern.confidence || 0) * weights.patterns;
-        }
-        if (analysis.trends.taiXiu.direction === 'up') score1 += weights.trends;
-        else if (analysis.trends.taiXiu.direction === 'down') score2 += weights.trends;
-        
-        return score1 > score2 ? 'Tài' : 'Xỉu';
-
-    } else { 
-        return 'Chẵn'; 
-    }
-  }
-
-  function calculatePatternSimilarity(p1, p2) { let m = 0; for (let i = 0; i < p1.length; i++) if (p1[i] === p2[i]) m++; return m / p1.length; }
-  
-  function predictTong(analysis) {
-      if(!analysis.basicStats.tongDistribution) return [];
-      const tongDistribution = {};
-      for (const [tong, count] of Object.entries(analysis.basicStats.tongDistribution)) { tongDistribution[tong] = (tongDistribution[tong] || 0) + count * 0.6; }
-      analysis.anomalies.recentAnomalies.forEach(anomaly => { if(tongDistribution[anomaly.tong]) tongDistribution[anomaly.tong] *= 0.5; });
-      return Object.entries(tongDistribution).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([tong]) => parseInt(tong));
-  }
-  
-  function calculateConfidence(analysis) {
-      let taiXiuConfidence = 0;
-      const totalStats = (analysis.basicStats.tai || 0) + (analysis.basicStats.xiu || 0);
-      if(totalStats > 0) taiXiuConfidence += Math.abs(analysis.basicStats.tai - analysis.basicStats.xiu) / totalStats * 40;
-      const streakRatio = analysis.streak.current.tai > analysis.streak.current.xiu ? analysis.streak.current.tai / (analysis.streak.max.tai || 1) : analysis.streak.current.xiu / (analysis.streak.max.xiu || 1);
-      taiXiuConfidence += Math.min(streakRatio, 1) * 25;
-      const patternConf = Object.values(analysis.patterns).reduce((sum, p) => sum + (p.confidence || 0), 0);
-      taiXiuConfidence += Math.min(patternConf, 1) * 20;
-      if (analysis.trends.taiXiu.direction !== 'neutral') taiXiuConfidence += 15;
-      return { taiXiu: Math.min(98, Math.round(50 + taiXiuConfidence / 2)), chanLe: 50 };
-  }
-
-  function generateAnalysisReport(analysis) {
-      const bestPattern = Object.values(analysis.patterns).sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
-      return {
-          summary: `Phân tích trên ${history.length} phiên.`,
-          keyFindings: [
-              `Xu hướng: ${analysis.trends.taiXiu.direction}.`,
-              `Chuỗi: ${analysis.streak.current.tai > analysis.streak.current.xiu ? `Tài ${analysis.streak.current.tai}` : `Xỉu ${analysis.streak.current.xiu}`}.`,
-              `Mẫu hình: ${bestPattern ? `${bestPattern.bestMatch.pattern} -> ${bestPattern.prediction}` : 'Không rõ'}.`,
-          ],
-      };
-  }
-}
-
 
 // ==================================================================
 //               CÁC BIẾN LƯU TRỮ TRẠNG THÁI
@@ -241,7 +26,7 @@ let latestResult = {
 let lichSuPhien = [];
 
 // --- Biến quản lý logic dự đoán ---
-let duDoanDaChot = "Chờ phiên mới..."; 
+let duDoanDaChot = "Chờ phiên mới...";
 let duDoanPhienSau = "Chờ dữ liệu...";
 let doTinCayPhienSau = 0;
 
@@ -252,7 +37,7 @@ let tongSai = 0;
 
 // --- THÊM MỚI: Biến quản lý chế độ đảo ngược ---
 let predictionMode = 'normal'; // 'normal' hoặc 'reversed'
-let consecutiveLosses = 0;     // Đếm số lần thua liên tiếp
+let consecutiveLosses = 0; // Đếm số lần thua liên tiếp
 
 
 // ==================================================================
@@ -261,7 +46,7 @@ let consecutiveLosses = 0;     // Đếm số lần thua liên tiếp
 const WS_URL = "wss://websocket.atpman.net/websocket";
 const HEADERS = { "Host": "websocket.atpman.net", "Origin": "https://play.789club.sx", "User-Agent": "Mozilla/5.0" };
 let lastEventId = 19;
-const LOGIN_MESSAGE = [ 1, "MiniGame", "hahaha123123pp", "123123pp", { info: JSON.stringify({ ipAddress: "2402:800:62cd:cb7c:e7d1:59ea:15c1:bc9d", wsToken: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJhcGk3ODljbHViYmJiIiwiYm90IjowLCJpc01lcmNoYW50IjpmYWxzZSwidmVyaWZpZWRCYW5rQWNjb3VudCI6ZmFsc2UsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6NjEyMTc1OTIsImFmZklkIjoiNzg5IiwiYmFubmVkIjpmYWxzZSwiYnJhbmQiOiI3ODkuY2x1YiIsInRpbWVzdGFtcCI6MTc1NDg0NzM4NjMyNywibG9ja0dhbWVzIjpbXSwiYW1vdW50IjowLCJsb2NrQ2hhdCI6ZmFsc2UsInBob25lVmVyaWZpZWQiOmZhbHNlLCJpcEFkZHJlc3MiOiIyNDAyOjgwMDo2MmNkOmNiN2M6ZTdkMTo1OWVhOjE1YzE6YmM5ZCIsIm11dGUiOmZhbHNlLCJhdmF0YXIiOiJodHRwczovL2FwaS54ZXVpLmlvL2ltYWdlcy9hdmF0YXIvYXZhdGFyXzE2LnBuZyIsInBsYXRmb3JtSWQiOjUsInVzZXJJZCI6IjljOTVmMjM2LTg0YzUtNDNjZi1iMmM3LWRhMGVjNmZjMjAyNiIsInJlZ1RpbWUiOjE3NTQ4NDcxMDM3NjMsInBob25lIjoiIiwiZGVwb3NpdCI6ZmFsc2UsInVzZXJuYW1lIjoiUzhfaGFoYWhhMTIzMTIzcHAifQ.D2QzuvfrzW9fDL5IwG_Mn_4iZ788p9FArJaijmAAAU0", locale: "vi", userId: "9c95f236-84c5-43cf-b2c7-da0ec6fc2026", username: "S8_hahaha123123pp", timestamp: 1754847386327, refreshToken: "5002f3a9294a458b8d108ca2ffdbf39a.a8b00ed9aaef411cae936df92997175e" }), signature: "17C76EDBE5DBB274523F28482BBA2591519DFAF671E9134A3BC2F7BA66E452C3D341D4D2278A4399690BEBD2E4BD6714B3BB9AECD96CE133A86F6F77EF4DFD0087311CCAF20520C0F211AF4D1AF51A0F812122B147BC76FF5878D39E6F50142D13D0495284B641027391A4229D15327D3E67403050EE1D4A061B928AA1C693E9" }];
+const LOGIN_MESSAGE = [1,"MiniGame","nayfeenhaaa","0000000",{"info":"{\"ipAddress\":\"2402:800:62cd:89d4:376f:3070:4802:64d\",\"wsToken\":\"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJmcmVlZWVkY21tbSIsImJvdCI6MCwiaXNNZXJjaGFudCI6ZmFsc2UsInZlcmlmaWVkQmFua0FjY291bnQiOmZhbHNlLCJwbGF5RXZlbnRMb2JieSI6ZmFsc2UsImN1c3RvbWVySWQiOjYxMzI4ODkwLCJhZmZJZCI6Ijc4OSIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoiNzg5LmNsdWIiLCJ0aW1lc3RhbXAiOjE3NTUxMjMwODg3NTUsImxvY2tHYW1lcyI6W10sImFtb3VudCI6MCwibG9ja0NoYXQiOmZhbHNlLCJwaG9uZVZlcmlmaWVkIjpmYWxzZSwiaXBBZGRyZXNzIjoiMjQwMjo4MDA6NjJjZDo4OWQ0OjM3NmY6MzA3MDo0ODAyOjY0ZCIsIm11dGUiOmZhbHNlLCJhdmF0YXIiOiJodHRwczovL2FwaS54ZXVpLmlvL2ltYWdlcy9hdmF0YXIvYXZhdGFyXzE1LnBuZyIsInBsYXRmb3JtSWQiOjUsInVzZXJJZCI6IjcyYmYxN2MzLTZiNmMtNDFiYS05NDZkLTE0NzM2MDc1YmUzOSIsInJlZ1RpbWUiOjE3NTUxMjMwMTY4MzQsInBob25lIjoiIiwiZGVwb3NpdCI6ZmFsc2UsInVzZXJuYW1lIjoiUzhfbmF5ZmVlbmhhYWEifQ.G87s0hd6LbjnhnVCkE-rLhwp99yAwZz3bFFLQRBAa00\",\"locale\":\"vi\",\"userId\":\"72bf17c3-6b6c-41ba-946d-14736075be39\",\"username\":\"S8_nayfeenhaaa\",\"timestamp\":1755123088755,\"refreshToken\":\"261eff9b6a054297bb89a8b611c0a30d.8f57c6cbaf2747d1ad43c54adda4c7a3\"}","signature":"2C5D7D15933E5702E3C9820DCBC4879C393F7B84FB1C2B456ECAF2F4E0E5625399ECD7953336C39B5BB09A9655A79C3E45819D1A6818C5ED8A99E9F7EA7FD619B271792D7D619AA701BFC62BB8DA3F67354CAC3B9E7A9C7C4E42EE86812849780FE855FD10FE680D8593478B9C47AC0B78B81124BA2DBCEC1282CB34ACF85DE8"}];
 const SUBSCRIBE_TX_RESULT = [6, "MiniGame", "taixiuUnbalancedPlugin", { cmd: 2000 }];
 const SUBSCRIBE_LOBBY = [6, "MiniGame", "lobbyPlugin", { cmd: 10001 }];
 
@@ -287,7 +72,7 @@ function connectWebSocket() {
       const data = JSON.parse(msg);
       if (Array.isArray(data)) {
         if (data[0] === 7 && data[1] === "Simms" && Number.isInteger(data[2])) { lastEventId = data[2]; }
-        
+
         if (data[1]?.cmd === 2006) {
           const { sid, d1, d2, d3 } = data[1];
           const tong = d1 + d2 + d3;
@@ -315,27 +100,30 @@ function connectWebSocket() {
           } else {
             console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Bắt đầu chuỗi dự đoán...`);
           }
-          
+
           latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketQuaThucTe };
-          lichSuPhien.push({ Tong: tong });
-          if (lichSuPhien.length > 1000) { lichSuPhien.shift(); }
           
-          if (lichSuPhien.length < 10) {
-            duDoanPhienSau = `Chờ đủ dữ liệu... (${lichSuPhien.length}/10)`;
+          lichSuPhien.push({ Tong: tong, result: ketQuaThucTe });
+          if (lichSuPhien.length > 1000) { lichSuPhien.shift(); }
+
+          if (lichSuPhien.length < 5) { // thuatoan.js mới cần ít nhất 5 phiên
+            duDoanPhienSau = `Chờ đủ dữ liệu... (${lichSuPhien.length}/5)`;
             doTinCayPhienSau = 0;
           } else {
             try {
-              const predictionResult = predictTaiXiuChanLeTongProMax(lichSuPhien);
-              const rawPrediction = predictionResult.taiXiu;
+              const predictionResult = analyzeAndPredict(lichSuPhien);
+              
+              const rawPrediction = predictionResult.du_doan;
               let finalPrediction = rawPrediction;
 
               if (predictionMode === 'reversed') {
-                finalPrediction = (rawPrediction === 'Tài' ? 'Xỉu' : 'Tài');
+                  if (rawPrediction === 'Tài') finalPrediction = 'Xỉu';
+                  if (rawPrediction === 'Xỉu') finalPrediction = 'Tài';
               }
-              
+
               duDoanPhienSau = finalPrediction;
-              doTinCayPhienSau = predictionResult.confidence.taiXiu;
-              console.log("   Phân tích:", predictionResult.analysisReport.keyFindings.join(' | '));
+              doTinCayPhienSau = parseInt(predictionResult.ty_le_thanh_cong) || 0;
+              console.log("   Phân tích:", predictionResult.giai_thich);
 
             } catch (error) {
               duDoanPhienSau = `Lỗi phân tích: ${error.message}`;
@@ -344,7 +132,7 @@ function connectWebSocket() {
           }
 
           duDoanDaChot = duDoanPhienSau;
-          
+
           console.log(`==> DỰ ĐOÁN PHIÊN TỚI (Chế độ: ${predictionMode}): ${duDoanPhienSau} (Độ tin cậy: ${doTinCayPhienSau}%)\n--------------------`);
         }
       }
@@ -363,27 +151,25 @@ const server = http.createServer((req, res) => {
 
     const patternString = lichSuPhien.map(p => p.Tong >= 11 ? 'T' : 'X').slice(-20).join('');
 
-    // **SỬA ĐỔI Ở ĐÂY: Trả về JSON theo định dạng cũ bạn muốn**
+    // SỬA ĐỔI: Chuyển các key sang chữ thường
     const legacyPayload = {
       id: latestResult.id,
-      Phien: latestResult.Phien,
-      Xuc_xac_1: latestResult.Xuc_xac_1,
-      Xuc_xac_2: latestResult.Xuc_xac_2,
-      Xuc_xac_3: latestResult.Xuc_xac_3,
-      Tong: latestResult.Tong,
-      Ket_qua: latestResult.Ket_qua,
+      phien: latestResult.Phien,
+      xuc_xac_1: latestResult.Xuc_xac_1,
+      xuc_xac_2: latestResult.Xuc_xac_2,
+      xuc_xac_3: latestResult.Xuc_xac_3,
+      tong: latestResult.Tong,
+      ket_qua: latestResult.Ket_qua,
       result: ketQuaDuDoan,
-      Pattern: patternString,
-      Du_doan: duDoanPhienSau,
-      Do_tin_cay: doTinCayPhienSau,
-      "Đúng": tongDung,
-      "Sai": tongSai,
-      // Thêm trường này để bạn biết nó đang ở chế độ nào, không làm hỏng cấu trúc cũ
-      "Che_do": predictionMode 
+      pattern: patternString,
+      du_doan: duDoanPhienSau,
+      do_tin_cay: doTinCayPhienSau,
+      dung: tongDung,
+      sai: tongSai,
+      che_do: predictionMode
     };
-    
-    // Gửi đi payload cũ
-    res.end(JSON.stringify(legacyPayload, null, 2)); 
+
+    res.end(JSON.stringify(legacyPayload, null, 2));
 
   } else {
     res.writeHead(404, { "Content-Type": "text/plain" });
@@ -396,4 +182,3 @@ server.listen(PORT, () => {
   console.log(`Truy cập http://localhost:${PORT}/taixiu để xem kết quả.`);
   connectWebSocket();
 });
-
