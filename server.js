@@ -28,14 +28,14 @@ let lichSuPhien = [];
 // --- Biến quản lý logic dự đoán ---
 let duDoanDaChot = "Chờ phiên mới...";
 let duDoanPhienSau = "Chờ dữ liệu...";
-let doTinCayPhienSau = 0;
+let doTinCayPhienSau = 0; // Vẫn cần biến này để logic chạy
 
 // --- Biến kết quả và thống kê ---
 let ketQuaDuDoan = "Chưa xác định";
 let tongDung = 0;
 let tongSai = 0;
 
-// --- THÊM MỚI: Biến quản lý chế độ đảo ngược ---
+// --- Biến quản lý chế độ đảo ngược ---
 let predictionMode = 'normal'; // 'normal' hoặc 'reversed'
 let consecutiveLosses = 0; // Đếm số lần thua liên tiếp
 
@@ -103,27 +103,34 @@ function connectWebSocket() {
 
           latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketQuaThucTe };
           
-          lichSuPhien.push({ Tong: tong, result: ketQuaThucTe });
-          if (lichSuPhien.length > 1000) { lichSuPhien.shift(); }
+          lichSuPhien.unshift({ Tong: tong, result: ketQuaThucTe });
+          if (lichSuPhien.length > 1000) { lichSuPhien.pop(); }
 
-          if (lichSuPhien.length < 5) { // thuatoan.js mới cần ít nhất 5 phiên
+          // SỬA LỖI: Thuật toán yêu cầu 5 phiên
+          if (lichSuPhien.length < 5) { 
             duDoanPhienSau = `Chờ đủ dữ liệu... (${lichSuPhien.length}/5)`;
             doTinCayPhienSau = 0;
           } else {
             try {
               const predictionResult = analyzeAndPredict(lichSuPhien);
               
-              const rawPrediction = predictionResult.du_doan;
-              let finalPrediction = rawPrediction;
+              if (predictionResult) {
+                const rawPrediction = predictionResult.taiXiu;
+                let finalPrediction = rawPrediction;
 
-              if (predictionMode === 'reversed') {
-                  if (rawPrediction === 'Tài') finalPrediction = 'Xỉu';
-                  if (rawPrediction === 'Xỉu') finalPrediction = 'Tài';
+                if (predictionMode === 'reversed') {
+                    if (rawPrediction === 'Tài') finalPrediction = 'Xỉu';
+                    if (rawPrediction === 'Xỉu') finalPrediction = 'Tài';
+                }
+
+                duDoanPhienSau = finalPrediction;
+                doTinCayPhienSau = predictionResult.confidence.taiXiu || 0;
+                console.log("   Phân tích:", predictionResult.analysisReport.recommendations.join(' '));
+              } else {
+                // Xử lý trường hợp thuật toán trả về null (khi chưa đủ dữ liệu)
+                duDoanPhienSau = `Chờ đủ dữ liệu... (${lichSuPhien.length}/5)`;
+                doTinCayPhienSau = 0;
               }
-
-              duDoanPhienSau = finalPrediction;
-              doTinCayPhienSau = parseInt(predictionResult.ty_le_thanh_cong) || 0;
-              console.log("   Phân tích:", predictionResult.giai_thich);
 
             } catch (error) {
               duDoanPhienSau = `Lỗi phân tích: ${error.message}`;
@@ -143,15 +150,16 @@ function connectWebSocket() {
 }
 
 // ==================================================================
-//            HTTP SERVER - TRẢ VỀ JSON THEO ĐỊNH DẠNG MỚI
+//            HTTP SERVER - TRẢ VỀ JSON THEO ĐỊNH DẠNG YÊU CẦU
 // ==================================================================
 const server = http.createServer((req, res) => {
-  if (req.url === "/taixiu") {
+  // SỬA LỖI: Đổi endpoint thành /scam như trong log
+  if (req.url === "/scam") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
 
-    const patternString = lichSuPhien.map(p => p.Tong >= 11 ? 'T' : 'X').slice(-20).join('');
+    const patternString = lichSuPhien.slice(0, 20).map(p => p.Tong >= 11 ? 'T' : 'X').join('');
 
-    // SỬA ĐỔI: Tạo payload mới theo đúng yêu cầu
+    // GIỮ NGUYÊN CẤU TRÚC JSON YÊU CẦU
     const newPayload = {
       "id": "dcumay",
       "Phien": latestResult.Phien,
@@ -170,7 +178,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(newPayload, null, 2));
 
   } else {
-    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Không tìm thấy - Vui lòng truy cập /scam");
   }
 });
