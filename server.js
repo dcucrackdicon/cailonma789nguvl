@@ -1,4 +1,5 @@
 // server.js
+
 const http = require('http');
 const WebSocket = require('ws');
 
@@ -10,11 +11,10 @@ const PORT = process.env.PORT || 10000;
 // ==================================================================
 //               CÁC BIẾN LƯU TRỮ TRẠNG THÁI
 // ==================================================================
-// THAY ĐỔI: Khởi tạo thực thể của thuật toán
 const predictor = new MasterPredictor();
 
 let latestResult = {
-  id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ",
+  id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222",
   Phien: 0,
   Xuc_xac_1: 0,
   Xuc_xac_2: 0,
@@ -22,21 +22,24 @@ let latestResult = {
   Tong: 0,
   Ket_qua: "Chưa có kết quả"
 };
-let lichSuPhien = []; // Vẫn giữ lại để hiển thị pattern
+let lichSuPhien = [];
 
 // --- Biến quản lý logic dự đoán ---
-let lastPrediction = "Chờ phiên mới..."; // Dự đoán đã đưa ra cho phiên vừa kết thúc
-let nextPrediction = "Chờ dữ liệu...";   // Dự đoán cho phiên sắp tới
-let nextConfidence = "0%";               // Độ tin cậy cho phiên sắp tới
+// **SỬA ĐỔI LOGIC:**
+// `predictionForPreviousSession` là dự đoán ĐÃ ĐƯA RA cho phiên VỪA KẾT THÚC.
+// `predictionForNextSession` là dự đoán cho phiên SẮP TỚI.
+let predictionForPreviousSession = "Chờ phiên mới...";
+let predictionForNextSession = "Chờ dữ liệu...";
+let nextConfidence = "0%";
 
 // --- Biến kết quả và thống kê ---
-let predictionStatus = "Chưa xác định";
+let predictionStatus = "Chưa xác định"; // Kết quả của dự đoán phiên trước
 let tongDung = 0;
 let tongSai = 0;
 
-// XÓA BỎ: Các biến quản lý chế độ đảo ngược không còn cần thiết
-// let predictionMode = 'normal'; 
-// let consecutiveLosses = 0;
+// --- BIẾN CHO CHẾ ĐỘ LẬT KÈO ---
+let predictionMode = 'Thường'; // 'Thường' hoặc 'Đảo ngược'
+let consecutiveLosses = 0;
 
 // ==================================================================
 //                      CẤU HÌNH WEBSOCKET
@@ -62,7 +65,6 @@ function connectWebSocket() {
     setInterval(() => ws.send(JSON.stringify([7, "Simms", lastEventId, 0, { id: 0 }])), 15000);
   });
 
-  // THAY ĐỔI: Chuyển toàn bộ logic xử lý thành async
   ws.on('message', async (msg) => {
     try {
       const data = JSON.parse(msg);
@@ -77,44 +79,67 @@ function connectWebSocket() {
         const tong = d1 + d2 + d3;
         const ketQuaThucTe = tong >= 11 ? "Tài" : "Xỉu";
 
-        // 1. So sánh kết quả phiên vừa rồi với dự đoán đã đưa ra
-        if (lastPrediction !== "Chờ phiên mới..." && lastPrediction !== "Chờ dữ liệu...") {
-          if (ketQuaThucTe === lastPrediction) {
-            predictionStatus = "Đúng";
-            tongDung++;
-          } else {
-            predictionStatus = "Sai";
-            tongSai++;
-          }
-          console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Dự đoán (Chốt): ${lastPrediction} => KẾT QUẢ: ${predictionStatus}`);
-          console.log(`--- Thống kê: ${tongDung} Đúng - ${tongSai} Sai`);
+        // **SỬA LỖI & THÊM LOGIC MỚI**
+        // BƯỚC 1: So sánh kết quả thực tế với dự đoán đã đưa ra cho phiên này.
+        if (predictionForPreviousSession.startsWith("Chờ")) {
+            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Bắt đầu chuỗi dự đoán...`);
+            predictionStatus = "Bắt đầu";
         } else {
-          console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Bắt đầu chuỗi dự đoán...`);
+            if (ketQuaThucTe === predictionForPreviousSession) {
+                predictionStatus = "Đúng";
+                tongDung++;
+                consecutiveLosses = 0; // Reset khi thắng
+            } else {
+                predictionStatus = "Sai";
+                tongSai++;
+                consecutiveLosses++; // Tăng khi thua
+            }
+            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Dự đoán (Chốt): ${predictionForPreviousSession} => KẾT QUẢ: ${predictionStatus}`);
+            console.log(`--- Thống kê: ${tongDung} Đúng - ${tongSai} Sai | Chuỗi thua: ${consecutiveLosses}`);
         }
 
-        // 2. Cập nhật trạng thái và lịch sử
-        latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketQuaThucTe };
-        lichSuPhien.unshift(ketQuaThucTe); // Chỉ cần lưu 'Tài' hoặc 'Xỉu'
+        // BƯỚC 2: Cập nhật chế độ "Lật Kèo"
+        if (predictionMode === 'Thường' && consecutiveLosses >= 2) {
+            predictionMode = 'Đảo ngược';
+            consecutiveLosses = 0; // Reset chuỗi thua sau khi chuyển mode
+            console.log("🔥 Lật kèo! Gãy 2 tay, chuyển sang chế độ Đảo ngược.");
+        } else if (predictionMode === 'Đảo ngược' && consecutiveLosses >= 1) {
+            predictionMode = 'Thường';
+            consecutiveLosses = 0; // Reset chuỗi thua sau khi chuyển mode
+            console.log("🔥 Quay xe! Gãy khi đang đảo, trở về chế độ Thường.");
+        }
+
+        // BƯỚC 3: Cập nhật trạng thái và lịch sử
+        latestResult = { id: "@tranbinh012 - @ghetvietcode - @Phucdzvl2222", Phien: sid, Xuc_xac_1: d1, Xuc_xac_2: d2, Xuc_xac_3: d3, Tong: tong, Ket_qua: ketQuaThucTe };
+        lichSuPhien.unshift(ketQuaThucTe);
         if (lichSuPhien.length > 1000) { lichSuPhien.pop(); }
 
-        // 3. Cập nhật thuật toán và lấy dự đoán mới (dùng async/await)
+        // BƯỚC 4: Lấy dự đoán GỐC từ thuật toán
         await predictor.updateData([ketQuaThucTe]);
         const predictionResult = await predictor.predict();
-
+        
+        let rawPrediction; // Dự đoán gốc từ thuật toán
         if (predictionResult && predictionResult.prediction) {
-          nextPrediction = predictionResult.prediction;
-          nextConfidence = `${(predictionResult.confidence * 100).toFixed(0)}%`;
-          console.log(`   Lý do: ${predictionResult.reason}`);
+            rawPrediction = predictionResult.prediction;
+            nextConfidence = `${(predictionResult.confidence * 100).toFixed(0)}%`;
+            console.log(`   Lý do (thuật toán): ${predictionResult.reason}`);
         } else {
-          // Xử lý khi thuật toán chưa đủ dữ liệu
-          nextPrediction = predictionResult.reason || "Chờ đủ dữ liệu...";
-          nextConfidence = "0%";
+            rawPrediction = predictionResult.reason || "Chờ đủ dữ liệu...";
+            nextConfidence = "0%";
         }
 
-        // 4. Lưu lại dự đoán mới để dùng cho phiên tiếp theo
-        lastPrediction = nextPrediction;
+        // BƯỚC 5: Áp dụng "Chế độ lật kèo" để ra dự đoán cuối cùng
+        if (predictionMode === 'Đảo ngược' && (rawPrediction === 'Tài' || rawPrediction === 'Xỉu')) {
+            predictionForNextSession = rawPrediction === 'Tài' ? 'Xỉu' : 'Tài';
+            console.log(`   >>> Chế độ ĐẢO NGƯỢC đang bật: ${rawPrediction} => ${predictionForNextSession}`);
+        } else {
+            predictionForNextSession = rawPrediction;
+        }
 
-        console.log(`==> DỰ ĐOÁN PHIÊN TỚI: ${nextPrediction} (Độ tin cậy: ${nextConfidence})\n--------------------`);
+        // BƯỚC 6: Cập nhật `predictionForPreviousSession` để chuẩn bị cho phiên TIẾP THEO
+        predictionForPreviousSession = predictionForNextSession;
+        
+        console.log(`==> DỰ ĐOÁN PHIÊN TỚI: ${predictionForNextSession} (Độ tin cậy: ${nextConfidence} | Chế độ: ${predictionMode})\n--------------------`);
       }
     } catch (err) { /* Bỏ qua lỗi */ }
   });
@@ -133,7 +158,7 @@ const server = http.createServer((req, res) => {
     const patternString = lichSuPhien.slice(0, 20).map(p => p.startsWith('T') ? 'T' : 'X').join('');
 
     const newPayload = {
-      "id": "@tranbinh012 - @ghetvietcode - @Phucdzvl2222 ",
+      "id": "@tranbinh012 - @ghetvietcode - @Phucdzvl2222",
       "Phien": latestResult.Phien,
       "Xuc_xac_1": latestResult.Xuc_xac_1,
       "Xuc_xac_2": latestResult.Xuc_xac_2,
@@ -141,9 +166,9 @@ const server = http.createServer((req, res) => {
       "Tong": latestResult.Tong,
       "Ket_qua": latestResult.Ket_qua,
       "Pattern": patternString,
-      "Du_doan": nextPrediction,
-      // THAY ĐỔI: Thêm độ tin cậy vào JSON
+      "Du_doan": predictionForNextSession, // Luôn hiển thị dự đoán cho phiên sắp tới
       "Do_tin_cay": nextConfidence, 
+      "Che_do": predictionMode, // Thêm chế độ hiện tại vào JSON
       "ket_qua_du_doan": predictionStatus,
       "tong_dung": tongDung,
       "tong_sai": tongSai
@@ -162,3 +187,4 @@ server.listen(PORT, () => {
   console.log(`Truy cập http://localhost:${PORT}/scam để xem kết quả.`);
   connectWebSocket();
 });
+
