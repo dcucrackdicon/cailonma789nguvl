@@ -2,8 +2,6 @@
 
 const http = require('http');
 const WebSocket = require('ws');
-
-// THAY ĐỔI: Import class MasterPredictor từ file thuatoan.js
 const { MasterPredictor } = require('./thuatoan.js');
 
 const PORT = process.env.PORT || 10000;
@@ -25,15 +23,12 @@ let latestResult = {
 let lichSuPhien = [];
 
 // --- Biến quản lý logic dự đoán ---
-// **SỬA ĐỔI LOGIC:**
-// `predictionForPreviousSession` là dự đoán ĐÃ ĐƯA RA cho phiên VỪA KẾT THÚC.
-// `predictionForNextSession` là dự đoán cho phiên SẮP TỚI.
 let predictionForPreviousSession = "Chờ phiên mới...";
 let predictionForNextSession = "Chờ dữ liệu...";
 let nextConfidence = "0%";
 
 // --- Biến kết quả và thống kê ---
-let predictionStatus = "Chưa xác định"; // Kết quả của dự đoán phiên trước
+let predictionStatus = "Chưa xác định";
 let tongDung = 0;
 let tongSai = 0;
 
@@ -79,12 +74,9 @@ function connectWebSocket() {
         const tong = d1 + d2 + d3;
         const ketQuaThucTe = tong >= 11 ? "Tài" : "Xỉu";
 
-        // **SỬA LỖI & THÊM LOGIC MỚI**
-        // BƯỚC 1: So sánh kết quả thực tế với dự đoán đã đưa ra cho phiên này.
-        if (predictionForPreviousSession.startsWith("Chờ")) {
-            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Bắt đầu chuỗi dự đoán...`);
-            predictionStatus = "Bắt đầu";
-        } else {
+        // BƯỚC 1: So sánh kết quả.
+        // **SỬA LỖI:** CHỈ TÍNH ĐÚNG/SAI KHI DỰ ĐOÁN TRƯỚC LÀ "TÀI" HOẶC "XỈU".
+        if (predictionForPreviousSession === 'Tài' || predictionForPreviousSession === 'Xỉu') {
             if (ketQuaThucTe === predictionForPreviousSession) {
                 predictionStatus = "Đúng";
                 tongDung++;
@@ -96,9 +88,13 @@ function connectWebSocket() {
             }
             console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | Dự đoán (Chốt): ${predictionForPreviousSession} => KẾT QUẢ: ${predictionStatus}`);
             console.log(`--- Thống kê: ${tongDung} Đúng - ${tongSai} Sai | Chuỗi thua: ${consecutiveLosses}`);
+        } else {
+            // Nếu dự đoán trước đó là "Chờ..." hoặc "Không đủ dữ liệu...", thì không tính đúng sai.
+            predictionStatus = "Chờ dữ liệu";
+            console.log(`--- Phiên #${sid}: ${ketQuaThucTe} (${tong}) | ${predictionForPreviousSession}`);
         }
-
-        // BƯỚC 2: Cập nhật chế độ "Lật Kèo"
+        
+        // BƯỚC 2: Cập nhật chế độ "Lật Kèo" (chỉ kích hoạt khi có kết quả Sai)
         if (predictionMode === 'Thường' && consecutiveLosses >= 2) {
             predictionMode = 'Đảo ngược';
             consecutiveLosses = 0; // Reset chuỗi thua sau khi chuyển mode
@@ -118,7 +114,7 @@ function connectWebSocket() {
         await predictor.updateData([ketQuaThucTe]);
         const predictionResult = await predictor.predict();
         
-        let rawPrediction; // Dự đoán gốc từ thuật toán
+        let rawPrediction;
         if (predictionResult && predictionResult.prediction) {
             rawPrediction = predictionResult.prediction;
             nextConfidence = `${(predictionResult.confidence * 100).toFixed(0)}%`;
@@ -136,7 +132,7 @@ function connectWebSocket() {
             predictionForNextSession = rawPrediction;
         }
 
-        // BƯỚC 6: Cập nhật `predictionForPreviousSession` để chuẩn bị cho phiên TIẾP THEO
+        // BƯỚC 6: Cập nhật state cho phiên tiếp theo
         predictionForPreviousSession = predictionForNextSession;
         
         console.log(`==> DỰ ĐOÁN PHIÊN TỚI: ${predictionForNextSession} (Độ tin cậy: ${nextConfidence} | Chế độ: ${predictionMode})\n--------------------`);
@@ -166,9 +162,9 @@ const server = http.createServer((req, res) => {
       "Tong": latestResult.Tong,
       "Ket_qua": latestResult.Ket_qua,
       "Pattern": patternString,
-      "Du_doan": predictionForNextSession, // Luôn hiển thị dự đoán cho phiên sắp tới
+      "Du_doan": predictionForNextSession,
       "Do_tin_cay": nextConfidence, 
-      "Che_do": predictionMode, // Thêm chế độ hiện tại vào JSON
+      // "Che_do": predictionMode, // Đã xóa theo yêu cầu
       "ket_qua_du_doan": predictionStatus,
       "tong_dung": tongDung,
       "tong_sai": tongSai
@@ -187,4 +183,3 @@ server.listen(PORT, () => {
   console.log(`Truy cập http://localhost:${PORT}/scam để xem kết quả.`);
   connectWebSocket();
 });
-
